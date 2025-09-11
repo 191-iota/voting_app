@@ -1,0 +1,11 @@
+[package]
+name = "voting_app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+dashmap = "6.1.0"
+rocket = { version = "0.5.1", features = ["json"]}
+rusqlite = "0.37.0"
+serde = "1.0.219"
+validator = { version = "0.20.0", features = ["derive"]}
