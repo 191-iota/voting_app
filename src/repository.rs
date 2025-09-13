@@ -7,7 +7,7 @@ pub fn save_voting_poll(poll: VotingRequest) -> Result<(), Box<dyn Error>> {
     let conn = Connection::open("voting_db.db3")?;
 
     conn.execute(
-        "INSERT INTO voting VALUES ?1, ?2, ?3",
+        "INSERT INTO voting (state, voting_time_mins, username) VALUES (?1, ?2, ?3)",
         (&poll.state.as_str(), &poll.voting_time, &poll.username),
     )?;
 
@@ -15,7 +15,7 @@ pub fn save_voting_poll(poll: VotingRequest) -> Result<(), Box<dyn Error>> {
 
     for option in poll.options {
         conn.execute(
-            "INSERT INTO voting_options VALUES ?1, ?2",
+            "INSERT INTO voting_options (title, is_selected) VALUES (?1, ?2)",
             (option.title, &voting_id),
         )?;
 
@@ -24,7 +24,7 @@ pub fn save_voting_poll(poll: VotingRequest) -> Result<(), Box<dyn Error>> {
                 conn.query_row("SELECT last_insert_rowid()", [], |row| row.get(0))?;
 
             conn.execute(
-                "INSERT INTO user_vote VALUES ?1, ?2",
+                "INSERT INTO user_vote (username, voting_opt_id) VALUES (?1, ?2)",
                 (&poll.username, selected_option_id),
             )?;
         }
@@ -76,8 +76,8 @@ pub fn init_db() -> Result<(), Box<dyn Error>> {
         "CREATE TABLE IF NOT EXISTS user_vote(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
-            voting_id INTEGER NOT NULL,
-            FOREIGN KEY (voting_id) REFERENCES voting(id),
+            voting_opt_id INTEGER NOT NULL,
+            FOREIGN KEY (voting_opt_id) REFERENCES voting_options(id),
             FOREIGN KEY (username) REFERENCES user(username)
         ) STRICT;",
         (),

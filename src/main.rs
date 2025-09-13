@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use dashmap::DashMap;
 use models::VotingRequest;
 use rocket::State;
@@ -6,10 +8,8 @@ use rocket::fs::NamedFile;
 use rocket::http::Status;
 use rocket::response::status;
 use rocket::serde::json::Json;
-use rocket::tokio::{
-    spawn,
-    time::{Duration, sleep},
-};
+use rocket::tokio;
+use rocket::tokio::time::{Duration, sleep};
 use uuid::Uuid;
 use validator::Validate;
 
@@ -47,22 +47,37 @@ async fn create_user(username: String) -> Result<(), status::Custom<&'static str
 #[post("/", data = "<body>")]
 async fn create_poll(
     body: Json<VotingRequest>,
-    active_polls: &State<DashMap<String, (VotingState, String)>>,
-) -> Result<(), status::Custom<&'static str>> {
+    active_polls: &State<Arc<DashMap<String, VotingState>>>,
+) -> Result<String, status::Custom<&'static str>> {
     // Validate entries
-    if let Err(e) = body.validate() {
-        Status::BadRequest
+    if body.validate().is_err() {
+        Err(status::Custom(Status::BadRequest, "Validation failed"))
     } else {
-        save_voting_poll(body.into_inner())?;
-        let poll_uuid = Uuid::new_v4();
+        save_voting_poll(body.into_inner()).expect("Failed storing voting poll");
 
-        spawn(async {
+        let poll_uuid = Uuid::new_v4();
+        let uuid_string = poll_uuid.clone().to_string();
+        let polls = active_polls.inner().clone();
+
+        tokio::spawn(async move {
+            polls.insert(uuid_string.clone(), VotingState::Started);
+
+            // Await till switching to finished state
             sleep(Duration::from_secs(86400)).await;
+
+            if let Some(mut v) = polls.get_mut(&uuid_string) {
+                *v = VotingState::Finished;
+            }
+
+            // Await till deletion
+            sleep(Duration::from_secs(2 * 86400)).await;
+            polls.remove(&uuid_string);
         });
+
         // Implement link generation for accessing the poll (perhaps use dashmap)
         // Implement task spawning which starts a countdown
         // Implement invalidation mechanism after countdown hits 0
-        Status::Ok
+        Ok(poll_uuid.to_string())
     }
 }
 
@@ -89,7 +104,7 @@ async fn rocket() -> _ {
 
     // create a dashmap which has a Uuid
     rocket::custom(figment)
-        .manage(DashMap::<String, VotingState>::new())
+        .manage(Arc::new(DashMap::<String, VotingState>::new()))
         .mount("/", routes![create_poll, create_user, index])
         .mount("/static", FileServer::from("static"))
 }
