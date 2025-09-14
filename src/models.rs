@@ -21,6 +21,13 @@ pub struct VotingRequest {
     pub state: VotingState,
 }
 
+pub struct VotingResponse {
+    pub title: String,
+    pub remaining_time: i64,
+    pub options: Vec<VotingOption>,
+    pub state: String,
+}
+
 #[derive(Deserialize, Validate)]
 pub struct VotingOption {
     #[validate(length(min = 1, max = 255))]

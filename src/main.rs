@@ -32,41 +32,38 @@ async fn index() -> Result<NamedFile, std::io::Error> {
 async fn create_user(username: String) -> Result<(), status::Custom<&'static str>> {
     let result = repository::create_user(username);
     match result {
-        Ok(v) => Ok(()),
-        Err(e) => {
-            println!("{e}");
-            Err(status::Custom(
-                Status::InternalServerError,
-                "Failed to create user by username.",
-            ))
-        }
+        Ok(_) => Ok(()),
+        Err(_) => Err(status::Custom(
+            Status::InternalServerError,
+            "Failed to create user by username.",
+        )),
     }
 }
 
-// In construction
 #[post("/", data = "<body>")]
 async fn create_poll(
     body: Json<VotingRequest>,
-    active_polls: &State<Arc<DashMap<String, VotingState>>>,
+    active_polls: &State<Arc<DashMap<String, (VotingState, String)>>>,
 ) -> Result<String, status::Custom<&'static str>> {
     // Validate entries
     if body.validate().is_err() {
         Err(status::Custom(Status::BadRequest, "Validation failed"))
     } else {
-        save_voting_poll(body.into_inner()).expect("Failed storing voting poll");
+        let poll_id = save_voting_poll(body.into_inner()).expect("Failed storing voting poll");
 
         let poll_uuid = Uuid::new_v4();
         let uuid_string = poll_uuid.clone().to_string();
         let polls = active_polls.inner().clone();
 
         tokio::spawn(async move {
-            polls.insert(uuid_string.clone(), VotingState::Started);
+            polls.insert(uuid_string.clone(), (VotingState::Started, poll_id));
 
             // Await till switching to finished state
             sleep(Duration::from_secs(86400)).await;
 
             if let Some(mut v) = polls.get_mut(&uuid_string) {
-                *v = VotingState::Finished;
+                let (state, _) = v.value_mut();
+                *state = VotingState::Finished;
             }
 
             // Await till deletion
@@ -74,10 +71,26 @@ async fn create_poll(
             polls.remove(&uuid_string);
         });
 
-        // Implement link generation for accessing the poll (perhaps use dashmap)
-        // Implement task spawning which starts a countdown
-        // Implement invalidation mechanism after countdown hits 0
         Ok(poll_uuid.to_string())
+    }
+}
+
+#[get("/<uuid>")]
+async fn get_poll(
+    uuid: String,
+    active_polls: &State<Arc<DashMap<String, VotingState>>>,
+) -> Result<String, status::Custom<&'static str>> {
+    if Uuid::parse_str(uuid.as_str()).is_err() {
+        return Err(status::Custom(Status::BadRequest, "Invalid UUID format"));
+    }
+
+    if let Some(v) = active_polls.get(&uuid) {
+        // get it from the database
+    } else {
+        return Err(status::Custom(
+            Status::NotFound,
+            "The provided ID does not exist",
+        ));
     }
 }
 
@@ -102,9 +115,9 @@ async fn rocket() -> _ {
         repository::init_db().expect("Failed to initialize DB");
     }
 
-    // create a dashmap which has a Uuid
     rocket::custom(figment)
-        .manage(Arc::new(DashMap::<String, VotingState>::new()))
+        // Dashmap has Uuid as key and a state and db id tuple as value
+        .manage(Arc::new(DashMap::<String, (VotingState, String)>::new()))
         .mount("/", routes![create_poll, create_user, index])
         .mount("/static", FileServer::from("static"))
 }
