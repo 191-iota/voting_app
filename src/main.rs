@@ -13,6 +13,7 @@ use rocket::tokio::time::{Duration, sleep};
 use uuid::Uuid;
 use validator::Validate;
 
+use self::models::VotingResponse;
 use self::models::VotingState;
 use self::repository::save_voting_poll;
 
@@ -78,15 +79,29 @@ async fn create_poll(
 #[get("/<uuid>")]
 async fn get_poll(
     uuid: String,
-    active_polls: &State<Arc<DashMap<String, VotingState>>>,
-) -> Result<String, status::Custom<&'static str>> {
+    active_polls: &State<Arc<DashMap<String, (VotingState, String)>>>,
+) -> Result<Json<VotingResponse>, status::Custom<&'static str>> {
     if Uuid::parse_str(uuid.as_str()).is_err() {
         return Err(status::Custom(Status::BadRequest, "Invalid UUID format"));
     }
 
     if let Some(v) = active_polls.get(&uuid) {
+        let (_, v) = v.value();
         // get it from the database
+
+        let result = repository::get_poll_by_id(v);
+        match result {
+            Ok(v) => Ok(Json(v)),
+            Err(e) => {
+                println!("{e}");
+                Err(status::Custom(
+                    Status::NotFound,
+                    "The provided ID does not exist",
+                ))
+            }
+        }
     } else {
+        println!("Dashmap issue");
         return Err(status::Custom(
             Status::NotFound,
             "The provided ID does not exist",
@@ -118,6 +133,6 @@ async fn rocket() -> _ {
     rocket::custom(figment)
         // Dashmap has Uuid as key and a state and db id tuple as value
         .manage(Arc::new(DashMap::<String, (VotingState, String)>::new()))
-        .mount("/", routes![create_poll, create_user, index])
+        .mount("/", routes![create_poll, create_user, index, get_poll])
         .mount("/static", FileServer::from("static"))
 }

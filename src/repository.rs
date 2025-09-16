@@ -20,10 +20,12 @@ pub fn save_voting_poll(poll: VotingRequest) -> Result<String, Box<dyn Error>> {
 
     for option in poll.options {
         let mut stmt = conn.prepare(
-            "INSERT INTO voting_options (title, is_selected) VALUES (?1, ?2) RETURNING id;",
+            "INSERT INTO voting_options (title, is_selected, voting_id) VALUES (?1, ?2, ?3) RETURNING id;",
         )?;
 
-        let option_id = stmt.query_row((option.title, &voting_id), |r| r.get::<_, i64>(0))?;
+        let option_id = stmt.query_row((option.title, option.is_selected, voting_id), |r| {
+            r.get::<_, i64>(0)
+        })?;
 
         if option.is_selected {
             conn.execute(
@@ -43,11 +45,13 @@ pub fn create_user(username: String) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn get_poll_by_id(id: String) -> Result<(), rusqlite::Error> {
+pub fn get_poll_by_id(id: &String) -> Result<VotingResponse, rusqlite::Error> {
     let conn = Connection::open("voting_db.db3")?;
+    println!("{id}");
+    let mut get_poll = conn.prepare("
+            SELECT title, created_at, voting_time_mins, state FROM voting v INNER JOIN voting_options vc on v.id = vc.voting_id WHERE v.id = ?1")?;
 
-    let mut sql = conn.prepare("SELECT title, created_at, voting_time_mins, state FROM voting v INNER JOIN voting_options vc on v.id = vc.voting_id WHERE v.id = ?1")?;
-    let voting = sql.query_row([id], |r| {
+    let mut poll = get_poll.query_row([&id], |r| {
         Ok(VotingResponse {
             title: r.get(0)?,
             remaining_time: calc_remaining_time(r.get(1)?, r.get(2)?),
@@ -56,7 +60,15 @@ pub fn get_poll_by_id(id: String) -> Result<(), rusqlite::Error> {
         })
     })?;
 
-    Ok(())
+    let mut get_options = conn.prepare("SELECT title FROM voting_options WHERE voting_id = ?1")?;
+
+    let voting_options = get_options
+        .query_map([&id], |r| r.get(0))?
+        .collect::<Result<Vec<String>, _>>()?;
+
+    poll.options = voting_options;
+
+    Ok(poll)
 
     // TODO: add the options of vote into hte created votingresponse object
 }
@@ -73,6 +85,11 @@ fn calc_remaining_time(timestamp: String, voting_time: u32) -> i64 {
 pub fn init_db() -> Result<(), Box<dyn Error>> {
     let conn = Connection::open("voting_db.db3")?;
 
+    conn.execute("DROP TABLE IF EXISTS user_vote", ())?;
+    conn.execute("DROP TABLE IF EXISTS voting_options", ())?;
+    conn.execute("DROP TABLE IF EXISTS user", ())?;
+    conn.execute("DROP TABLE IF EXISTS voting", ())?;
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS user(
             username TEXT PRIMARY KEY
@@ -81,7 +98,7 @@ pub fn init_db() -> Result<(), Box<dyn Error>> {
     )?;
 
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS voting(
+        "CREATE TABLE voting(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             state TEXT NOT NULL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
@@ -93,9 +110,10 @@ pub fn init_db() -> Result<(), Box<dyn Error>> {
     )?;
 
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS voting_options(
+        "CREATE TABLE voting_options(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
+            is_selected INTEGER NOT NULL,
             voting_id INTEGER NOT NULL,
             FOREIGN KEY (voting_id) REFERENCES voting(id)
         ) STRICT;",
@@ -103,7 +121,7 @@ pub fn init_db() -> Result<(), Box<dyn Error>> {
     )?;
 
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS user_vote(
+        "CREATE TABLE user_vote(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
             voting_opt_id INTEGER NOT NULL,

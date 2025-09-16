@@ -1,4 +1,5 @@
 use rocket::serde::Deserialize;
+use serde::Serialize;
 use std::collections::HashMap;
 use validator::Validate;
 
@@ -21,10 +22,11 @@ pub struct VotingRequest {
     pub state: VotingState,
 }
 
+#[derive(Serialize)]
 pub struct VotingResponse {
     pub title: String,
     pub remaining_time: i64,
-    pub options: Vec<VotingOption>,
+    pub options: Vec<String>,
     pub state: String,
 }
 
