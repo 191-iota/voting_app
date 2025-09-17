@@ -4,7 +4,9 @@ use crate::models::VotingRequest;
 use crate::models::VotingResponse;
 use chrono::DateTime;
 use chrono::Utc;
-use rusqlite::{Connection, Result};
+use rusqlite::Connection;
+use rusqlite::Result;
+use rusqlite::params;
 
 pub fn save_voting_poll(poll: VotingRequest) -> Result<String, Box<dyn Error>> {
     let conn = Connection::open("voting_db.db3")?;
@@ -47,7 +49,6 @@ pub fn create_user(username: String) -> Result<(), Box<dyn Error>> {
 
 pub fn get_poll_by_id(id: &String) -> Result<VotingResponse, rusqlite::Error> {
     let conn = Connection::open("voting_db.db3")?;
-    println!("{id}");
     let mut get_poll = conn.prepare("
             SELECT title, created_at, voting_time_mins, state FROM voting v INNER JOIN voting_options vc on v.id = vc.voting_id WHERE v.id = ?1")?;
 
@@ -80,6 +81,43 @@ fn calc_remaining_time(timestamp: String, voting_time: u32) -> i64 {
 
     let utc_stamp = DateTime::<Utc>::from_utc(naive, Utc);
     voting_time as i64 - Utc::now().signed_duration_since(utc_stamp).num_minutes()
+}
+
+pub fn update_vote(
+    poll_id: String,
+    option_id: String,
+    username: String,
+) -> Result<String, rusqlite::Error> {
+    // voting_opt has to be part of poll
+    // there shouldn't exist an entry where user has already selected voting_opt which is part of
+    // the same poll -> if it exists, delete that entry and insert the new vote
+
+    let conn = Connection::open("voting_db.db3")?;
+
+    let mut exists_opt = conn.prepare("SELECT EXISTS(SELECT 1 FROM user_vote uv WHERE username = ?1 AND voting_id = ?2 INNER JOIN voting v ON uv.voting_id = v.id)")?;
+    let exists: bool = exists_opt.query_row(params![&username, &poll_id], |r| r.get(0))?;
+
+    if exists {
+        // Delete the entry
+        let count = conn.execute(
+            "DELETE FROM user_vote WHERE username ?1 AND voting_id = ?2",
+            params![&username, &poll_id],
+        )?;
+
+        if count != 1 {
+            println!(
+                "Encountered unintended behavior. Multiple rows were deleted where there should have been only one deletion. uname: {}, poll_id: {}",
+                &username, &poll_id
+            );
+        }
+    }
+
+    conn.execute(
+        "INSERT INTO user_vote VALUES (?1, ?2)",
+        params![&username, &option_id],
+    )?;
+
+    Ok(poll_id)
 }
 
 pub fn init_db() -> Result<(), Box<dyn Error>> {

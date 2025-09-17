@@ -37,7 +37,7 @@ pub struct VotingOption {
     pub is_selected: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, PartialEq, Eq)]
 pub enum VotingState {
     Started,
     Finished,

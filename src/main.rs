@@ -101,13 +101,42 @@ async fn get_poll(
             }
         }
     } else {
-        println!("Dashmap issue");
+        println!("In memory id-mapping issue");
         return Err(status::Custom(
             Status::NotFound,
             "The provided ID does not exist",
         ));
     }
 }
+
+#[put("/<poll_uuid>/<option_id>/<username>")]
+async fn update_poll(
+    poll_uuid: String,
+    username: String,
+    option_id: String,
+    active_polls: &State<Arc<DashMap<String, (VotingState, String)>>>,
+) -> Result<String, status::Custom<&'static str>> {
+    if Uuid::parse_str(&poll_uuid).is_err() {
+        return Err(status::Custom(Status::BadRequest, "Invalid UUID format"));
+    }
+
+    let poll = active_polls
+        .get(&poll_uuid)
+        .ok_or(status::Custom(Status::NotFound, "Poll not found"))?;
+
+    let (state, db_id) = poll.value();
+
+    if *state != VotingState::Started {
+        return Err(status::Custom(Status::BadRequest, "Poll not active"));
+    }
+
+    match repository::update_vote(db_id.clone(), option_id, username) {
+        Ok(v) => Ok(v),
+        Err(e) => Err(status::Custom(Status::BadRequest, "Failed updating vote")),
+    }
+}
+
+// TODO: implement via broadcast rx tx eventstream an endpoint which live updates the view
 
 #[launch]
 async fn rocket() -> _ {
@@ -133,6 +162,9 @@ async fn rocket() -> _ {
     rocket::custom(figment)
         // Dashmap has Uuid as key and a state and db id tuple as value
         .manage(Arc::new(DashMap::<String, (VotingState, String)>::new()))
-        .mount("/", routes![create_poll, create_user, index, get_poll])
+        .mount(
+            "/",
+            routes![create_poll, create_user, index, get_poll, update_poll],
+        )
         .mount("/static", FileServer::from("static"))
 }
