@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 chrono = "0.4.42"
 dashmap = "6.1.0"
+log = "0.4.28"
 rocket = { version = "0.5.1", features = ["json"]}
 rusqlite = "0.37.0"
 serde = "1.0.219"

@@ -4,6 +4,7 @@ use crate::models::VotingRequest;
 use crate::models::VotingResponse;
 use chrono::DateTime;
 use chrono::Utc;
+use log::info;
 use rusqlite::Connection;
 use rusqlite::Result;
 use rusqlite::params;
@@ -85,12 +86,11 @@ fn calc_remaining_time(timestamp: String, voting_time: u32) -> i64 {
 
 pub fn update_vote(
     poll_id: String,
-    option_id: String,
+    option_id: Vec<String>,
     username: String,
 ) -> Result<String, rusqlite::Error> {
     // voting_opt has to be part of poll
-    // there shouldn't exist an entry where user has already selected voting_opt which is part of
-    // the same poll -> if it exists, delete that entry and insert the new vote
+    // because multiple votes are possible, I have implemented a "deletesert"
 
     let conn = Connection::open("voting_db.db3")?;
 
@@ -104,18 +104,20 @@ pub fn update_vote(
             params![&username, &poll_id],
         )?;
 
-        if count != 1 {
-            println!(
-                "Encountered unintended behavior. Multiple rows were deleted where there should have been only one deletion. uname: {}, poll_id: {}",
-                &username, &poll_id
-            );
-        }
+        info!("user {username} has deleted {count} votes from poll {poll_id}");
     }
 
-    conn.execute(
-        "INSERT INTO user_vote VALUES (?1, ?2)",
-        params![&username, &option_id],
-    )?;
+    for o in &option_id {
+        conn.execute(
+            "INSERT INTO user_vote VALUES (?1, ?2)",
+            params![&username, o],
+        )?;
+    }
+
+    info!(
+        "user {username} has selected {} options from poll {poll_id}",
+        option_id.len()
+    );
 
     Ok(poll_id)
 }

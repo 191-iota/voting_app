@@ -15,6 +15,7 @@ use validator::Validate;
 
 use self::models::VotingResponse;
 use self::models::VotingState;
+use self::models::VotingUpdateRequest;
 use self::repository::save_voting_poll;
 
 pub mod models;
@@ -28,6 +29,8 @@ extern crate rocket;
 async fn index() -> Result<NamedFile, std::io::Error> {
     NamedFile::open("static/index.html").await
 }
+
+// TODO: implement better logging via added crate "log"
 
 #[post("/user/<username>")]
 async fn create_user(username: String) -> Result<(), status::Custom<&'static str>> {
@@ -109,19 +112,18 @@ async fn get_poll(
     }
 }
 
-#[put("/<poll_uuid>/<option_id>/<username>")]
+#[put("/", data = "<req>")]
 async fn update_poll(
-    poll_uuid: String,
-    username: String,
-    option_id: String,
+    req: Json<VotingUpdateRequest>,
     active_polls: &State<Arc<DashMap<String, (VotingState, String)>>>,
 ) -> Result<String, status::Custom<&'static str>> {
-    if Uuid::parse_str(&poll_uuid).is_err() {
+    let body = req.into_inner();
+    if Uuid::parse_str(&body.poll_id).is_err() {
         return Err(status::Custom(Status::BadRequest, "Invalid UUID format"));
     }
 
     let poll = active_polls
-        .get(&poll_uuid)
+        .get(&body.poll_id)
         .ok_or(status::Custom(Status::NotFound, "Poll not found"))?;
 
     let (state, db_id) = poll.value();
@@ -130,9 +132,9 @@ async fn update_poll(
         return Err(status::Custom(Status::BadRequest, "Poll not active"));
     }
 
-    match repository::update_vote(db_id.clone(), option_id, username) {
+    match repository::update_vote(db_id.clone(), body.option_ids, body.username) {
         Ok(v) => Ok(v),
-        Err(e) => Err(status::Custom(Status::BadRequest, "Failed updating vote")),
+        Err(_) => Err(status::Custom(Status::BadRequest, "Failed updating vote")),
     }
 }
 
