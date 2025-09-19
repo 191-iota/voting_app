@@ -1,5 +1,6 @@
 use std::error::Error;
 
+use crate::models::VotingOption;
 use crate::models::VotingRequest;
 use crate::models::VotingResponse;
 use chrono::DateTime;
@@ -9,19 +10,28 @@ use rusqlite::Connection;
 use rusqlite::Result;
 use rusqlite::params;
 
+// TODO: create a "does user exist" function
+
 pub fn save_voting_poll(poll: VotingRequest) -> Result<String, Box<dyn Error>> {
     let conn = Connection::open("voting_db.db3")?;
 
     let mut stmt = conn.prepare(
-        "INSERT INTO voting (state, voting_time_mins, username) VALUES (?1, ?2, ?3) RETURNING id;",
+        "INSERT INTO voting (state, title, voting_time_mins, username, is_multi) VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id;",
     )?;
 
     let voting_id = stmt.query_row(
-        (&poll.state.as_str(), &poll.voting_time, &poll.username),
+        (
+            &poll.state.as_str(),
+            poll.title,
+            &poll.voting_time,
+            &poll.username,
+            &poll.is_multi,
+        ),
         |r| r.get::<_, i64>(0),
     )?;
 
     for option in poll.options {
+        // TODO: implement validation for is_multi
         let mut stmt = conn.prepare(
             "INSERT INTO voting_options (title, is_selected, voting_id) VALUES (?1, ?2, ?3) RETURNING id;",
         )?;
@@ -50,8 +60,9 @@ pub fn create_user(username: String) -> Result<(), Box<dyn Error>> {
 
 pub fn get_poll_by_id(id: &String) -> Result<VotingResponse, rusqlite::Error> {
     let conn = Connection::open("voting_db.db3")?;
-    let mut get_poll = conn.prepare("
-            SELECT title, created_at, voting_time_mins, state FROM voting v INNER JOIN voting_options vc on v.id = vc.voting_id WHERE v.id = ?1")?;
+    let mut get_poll = conn.prepare(
+        "SELECT v.title, v.created_at, v.voting_time_mins, v.state, v.is_multi FROM voting v WHERE id = ?1",
+    )?;
 
     let mut poll = get_poll.query_row([&id], |r| {
         Ok(VotingResponse {
@@ -59,14 +70,19 @@ pub fn get_poll_by_id(id: &String) -> Result<VotingResponse, rusqlite::Error> {
             remaining_time: calc_remaining_time(r.get(1)?, r.get(2)?),
             options: vec![],
             state: r.get(3)?,
+            is_multi: r.get(4)?,
         })
     })?;
 
     let mut get_options = conn.prepare("SELECT title FROM voting_options WHERE voting_id = ?1")?;
 
-    let voting_options = get_options
-        .query_map([&id], |r| r.get(0))?
-        .collect::<Result<Vec<String>, _>>()?;
+    // TODO: should return Vec<VotingOption>
+    let voting_options: Vec<VotingOption> = get_options
+        .query_map([&id], |r| {
+            Ok(VotingOption {
+            
+    })
+        .collect::<Result<Vec<_>, _>>()?;
 
     poll.options = voting_options;
 
@@ -86,11 +102,11 @@ fn calc_remaining_time(timestamp: String, voting_time: u32) -> i64 {
 
 pub fn update_vote(
     poll_id: String,
-    option_id: Vec<String>,
+    option_ids: Vec<String>,
     username: String,
 ) -> Result<String, rusqlite::Error> {
     // voting_opt has to be part of poll
-    // because multiple votes are possible, I have implemented a "deletesert"
+    // because multiple votes are possible, a deletesert is implemented
 
     let conn = Connection::open("voting_db.db3")?;
 
@@ -107,7 +123,7 @@ pub fn update_vote(
         info!("user {username} has deleted {count} votes from poll {poll_id}");
     }
 
-    for o in &option_id {
+    for o in &option_ids {
         conn.execute(
             "INSERT INTO user_vote VALUES (?1, ?2)",
             params![&username, o],
@@ -116,7 +132,7 @@ pub fn update_vote(
 
     info!(
         "user {username} has selected {} options from poll {poll_id}",
-        option_id.len()
+        option_ids.len()
     );
 
     Ok(poll_id)
@@ -140,10 +156,12 @@ pub fn init_db() -> Result<(), Box<dyn Error>> {
     conn.execute(
         "CREATE TABLE voting(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
             state TEXT NOT NULL,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP,
             voting_time_mins INTEGER NOT NULL,
             username TEXT NOT NULL,
+            is_multi INTEGER NOT NULL,
             FOREIGN KEY (username) REFERENCES user(username)
         ) STRICT;",
         (),

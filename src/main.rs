@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use log::warn;
 use models::VotingRequest;
 use rocket::State;
 use rocket::fs::FileServer;
@@ -49,6 +50,7 @@ async fn create_poll(
     body: Json<VotingRequest>,
     active_polls: &State<Arc<DashMap<String, (VotingState, String)>>>,
 ) -> Result<String, status::Custom<&'static str>> {
+    // TODO: implement user existing validation (by username)
     // Validate entries
     if body.validate().is_err() {
         Err(status::Custom(Status::BadRequest, "Validation failed"))
@@ -96,7 +98,7 @@ async fn get_poll(
         match result {
             Ok(v) => Ok(Json(v)),
             Err(e) => {
-                println!("{e}");
+                warn!("non existent id access: db poll id, error: {e}");
                 Err(status::Custom(
                     Status::NotFound,
                     "The provided ID does not exist",
@@ -104,11 +106,11 @@ async fn get_poll(
             }
         }
     } else {
-        println!("In memory id-mapping issue");
-        return Err(status::Custom(
+        warn!("non existent id access: in-memory poll id");
+        Err(status::Custom(
             Status::NotFound,
             "The provided ID does not exist",
-        ));
+        ))
     }
 }
 
@@ -132,7 +134,7 @@ async fn update_poll(
         return Err(status::Custom(Status::BadRequest, "Poll not active"));
     }
 
-    match repository::update_vote(db_id.clone(), body.option_ids, body.username) {
+    match repository::update_vote(db_id.clone(), body.voted_option_ids, body.username) {
         Ok(v) => Ok(v),
         Err(_) => Err(status::Custom(Status::BadRequest, "Failed updating vote")),
     }
