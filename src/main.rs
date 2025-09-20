@@ -35,6 +35,7 @@ async fn index() -> Result<NamedFile, std::io::Error> {
 
 #[post("/user/<username>")]
 async fn create_user(username: String) -> Result<(), status::Custom<&'static str>> {
+    // TODO: implement username existing validation
     let result = repository::create_user(username);
     match result {
         Ok(_) => Ok(()),
@@ -48,7 +49,7 @@ async fn create_user(username: String) -> Result<(), status::Custom<&'static str
 #[post("/", data = "<body>")]
 async fn create_poll(
     body: Json<VotingRequest>,
-    active_polls: &State<Arc<DashMap<String, (VotingState, String)>>>,
+    active_polls: &State<Arc<DashMap<String, (VotingState, i64)>>>,
 ) -> Result<String, status::Custom<&'static str>> {
     // TODO: implement user existing validation (by username)
     // Validate entries
@@ -84,7 +85,7 @@ async fn create_poll(
 #[get("/<uuid>")]
 async fn get_poll(
     uuid: String,
-    active_polls: &State<Arc<DashMap<String, (VotingState, String)>>>,
+    active_polls: &State<Arc<DashMap<String, (VotingState, i64)>>>,
 ) -> Result<Json<VotingResponse>, status::Custom<&'static str>> {
     if Uuid::parse_str(uuid.as_str()).is_err() {
         return Err(status::Custom(Status::BadRequest, "Invalid UUID format"));
@@ -93,7 +94,6 @@ async fn get_poll(
     if let Some(v) = active_polls.get(&uuid) {
         let (_, v) = v.value();
         // get it from the database
-
         let result = repository::get_poll_by_id(v);
         match result {
             Ok(v) => Ok(Json(v)),
@@ -117,7 +117,7 @@ async fn get_poll(
 #[put("/", data = "<req>")]
 async fn update_poll(
     req: Json<VotingUpdateRequest>,
-    active_polls: &State<Arc<DashMap<String, (VotingState, String)>>>,
+    active_polls: &State<Arc<DashMap<String, (VotingState, i64)>>>,
 ) -> Result<String, status::Custom<&'static str>> {
     let body = req.into_inner();
     if Uuid::parse_str(&body.poll_id).is_err() {
@@ -130,13 +130,16 @@ async fn update_poll(
 
     let (state, db_id) = poll.value();
 
-    if *state != VotingState::Started {
+    if state != &VotingState::Started {
         return Err(status::Custom(Status::BadRequest, "Poll not active"));
     }
 
-    match repository::update_vote(db_id.clone(), body.voted_option_ids, body.username) {
-        Ok(v) => Ok(v),
-        Err(_) => Err(status::Custom(Status::BadRequest, "Failed updating vote")),
+    match repository::update_vote(*db_id, body.voted_option_ids, body.username) {
+        Ok(v) => Ok(v.to_string()),
+        Err(e) => {
+            warn!("non existent id access: db poll id, error: {e}");
+            Err(status::Custom(Status::BadRequest, "Failed updating vote"))
+        }
     }
 }
 
@@ -157,7 +160,7 @@ async fn rocket() -> _ {
     let do_init = std::env::var("DO_INIT")
         .ok()
         .and_then(|v| v.parse::<bool>().ok())
-        .unwrap_or(true);
+        .unwrap_or(false);
 
     if do_init {
         repository::init_db().expect("Failed to initialize DB");
@@ -165,7 +168,7 @@ async fn rocket() -> _ {
 
     rocket::custom(figment)
         // Dashmap has Uuid as key and a state and db id tuple as value
-        .manage(Arc::new(DashMap::<String, (VotingState, String)>::new()))
+        .manage(Arc::new(DashMap::<String, (VotingState, i64)>::new()))
         .mount(
             "/",
             routes![create_poll, create_user, index, get_poll, update_poll],

@@ -18,7 +18,7 @@ pub struct VotingRequest {
     #[validate(range(min = 1, max = 255))]
     pub voting_time: u32,
     // TODO: Implement rule that one option has to be selected
-    pub options: Vec<VotingOption>,
+    pub options: Vec<VotingOptionRequest>,
     pub state: VotingState,
     pub is_multi: bool,
 }
@@ -27,7 +27,7 @@ pub struct VotingRequest {
 pub struct VotingResponse {
     pub title: String,
     pub remaining_time: i64,
-    pub options: Vec<VotingOption>,
+    pub options: Vec<VotingOptionResponse>,
     pub state: String,
     pub is_multi: bool,
 }
@@ -40,9 +40,15 @@ pub struct VotingUpdateRequest {
 }
 
 #[derive(Deserialize, Validate)]
-pub struct VotingOption {
-    pub id: String,
+pub struct VotingOptionRequest {
     #[validate(length(min = 1, max = 255))]
+    pub title: String,
+    pub is_selected: bool,
+}
+
+#[derive(Serialize)]
+pub struct VotingOptionResponse {
+    pub id: i64,
     pub title: String,
     pub is_selected: bool,
 }

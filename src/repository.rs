@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use crate::models::VotingOption;
+use crate::models::VotingOptionResponse;
 use crate::models::VotingRequest;
 use crate::models::VotingResponse;
 use chrono::DateTime;
@@ -12,7 +12,7 @@ use rusqlite::params;
 
 // TODO: create a "does user exist" function
 
-pub fn save_voting_poll(poll: VotingRequest) -> Result<String, Box<dyn Error>> {
+pub fn save_voting_poll(poll: VotingRequest) -> Result<i64, Box<dyn Error>> {
     let conn = Connection::open("voting_db.db3")?;
 
     let mut stmt = conn.prepare(
@@ -48,7 +48,7 @@ pub fn save_voting_poll(poll: VotingRequest) -> Result<String, Box<dyn Error>> {
         }
     }
 
-    Ok(voting_id.to_string())
+    Ok(voting_id)
 }
 
 pub fn create_user(username: String) -> Result<(), Box<dyn Error>> {
@@ -58,13 +58,13 @@ pub fn create_user(username: String) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn get_poll_by_id(id: &String) -> Result<VotingResponse, rusqlite::Error> {
+pub fn get_poll_by_id(id: &i64) -> Result<VotingResponse, rusqlite::Error> {
     let conn = Connection::open("voting_db.db3")?;
     let mut get_poll = conn.prepare(
-        "SELECT v.title, v.created_at, v.voting_time_mins, v.state, v.is_multi FROM voting v WHERE id = ?1",
+        "SELECT v.title, v.created_at, v.voting_time_mins, v.state, v.is_multi FROM voting v WHERE v.id = ?1",
     )?;
 
-    let mut poll = get_poll.query_row([&id], |r| {
+    let mut poll = get_poll.query_row([id], |r| {
         Ok(VotingResponse {
             title: r.get(0)?,
             remaining_time: calc_remaining_time(r.get(1)?, r.get(2)?),
@@ -73,22 +73,26 @@ pub fn get_poll_by_id(id: &String) -> Result<VotingResponse, rusqlite::Error> {
             is_multi: r.get(4)?,
         })
     })?;
+    println!("{}", poll.title);
 
-    let mut get_options = conn.prepare("SELECT title FROM voting_options WHERE voting_id = ?1")?;
+    let mut get_options = conn.prepare(
+        "SELECT vo.id, vo.title, vo.is_selected FROM voting_options vo WHERE vo.voting_id = ?1",
+    )?;
 
     // TODO: should return Vec<VotingOption>
-    let voting_options: Vec<VotingOption> = get_options
-        .query_map([&id], |r| {
-            Ok(VotingOption {
-            
-    })
+    let voting_options: Vec<VotingOptionResponse> = get_options
+        .query_map([id], |r| {
+            Ok(VotingOptionResponse {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                is_selected: r.get(2)?,
+            })
+        })?
         .collect::<Result<Vec<_>, _>>()?;
 
     poll.options = voting_options;
 
     Ok(poll)
-
-    // TODO: add the options of vote into hte created votingresponse object
 }
 
 // Assuming timestamps are stored in the ISO 8601 format -> "2025-04-02 12:12:12"
@@ -101,10 +105,10 @@ fn calc_remaining_time(timestamp: String, voting_time: u32) -> i64 {
 }
 
 pub fn update_vote(
-    poll_id: String,
+    poll_id: i64,
     option_ids: Vec<String>,
     username: String,
-) -> Result<String, rusqlite::Error> {
+) -> Result<i64, rusqlite::Error> {
     // voting_opt has to be part of poll
     // because multiple votes are possible, a deletesert is implemented
 
