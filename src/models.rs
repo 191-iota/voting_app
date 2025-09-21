@@ -2,6 +2,7 @@ use rocket::serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
 use validator::Validate;
+use validator::ValidationError;
 
 pub struct VotingSession {
     pub title: String,
@@ -18,6 +19,7 @@ pub struct VotingRequest {
     #[validate(range(min = 1, max = 255))]
     pub voting_time: u32,
     // TODO: Implement rule that one option has to be selected
+    #[validate(length(min = 1), custom(function = "validate_min_selection"))]
     pub options: Vec<VotingOptionRequest>,
     pub state: VotingState,
     pub is_multi: bool,
@@ -36,7 +38,7 @@ pub struct VotingResponse {
 pub struct VotingUpdateRequest {
     pub username: String,
     pub poll_id: String,
-    pub voted_option_ids: Vec<String>,
+    pub voted_option_ids: Vec<i64>,
 }
 
 #[derive(Deserialize, Validate)]
@@ -66,4 +68,8 @@ impl VotingState {
             VotingState::Finished => "Finished",
         }
     }
+}
+
+fn validate_min_selection(options: Vec<VotingOptionRequest>) -> Result<(), ValidationError> {
+    Ok(())
 }

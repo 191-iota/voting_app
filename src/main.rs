@@ -31,8 +31,6 @@ async fn index() -> Result<NamedFile, std::io::Error> {
     NamedFile::open("static/index.html").await
 }
 
-// TODO: implement better logging via added crate "log"
-
 #[post("/user/<username>")]
 async fn create_user(username: String) -> Result<(), status::Custom<&'static str>> {
     // TODO: implement username existing validation

@@ -6,6 +6,7 @@ use crate::models::VotingResponse;
 use chrono::DateTime;
 use chrono::Utc;
 use log::info;
+use log::warn;
 use rusqlite::Connection;
 use rusqlite::Result;
 use rusqlite::params;
@@ -106,7 +107,7 @@ fn calc_remaining_time(timestamp: String, voting_time: u32) -> i64 {
 
 pub fn update_vote(
     poll_id: i64,
-    option_ids: Vec<String>,
+    option_ids: Vec<i64>,
     username: String,
 ) -> Result<i64, rusqlite::Error> {
     // voting_opt has to be part of poll
@@ -114,30 +115,40 @@ pub fn update_vote(
 
     let conn = Connection::open("voting_db.db3")?;
 
-    let mut exists_opt = conn.prepare("SELECT EXISTS(SELECT 1 FROM user_vote uv WHERE username = ?1 AND voting_id = ?2 INNER JOIN voting v ON uv.voting_id = v.id)")?;
-    let exists: bool = exists_opt.query_row(params![&username, &poll_id], |r| r.get(0))?;
-
-    if exists {
-        // Delete the entry
-        let count = conn.execute(
-            "DELETE FROM user_vote WHERE username ?1 AND voting_id = ?2",
-            params![&username, &poll_id],
+    // check if provided selected options are part of poll
+    for o in &option_ids {
+        let mut exists_opt = conn.prepare(
+            "SELECT EXISTS(SELECT 1 FROM voting_options vo WHERE vo.voting_id = ?1 AND vo.id = ?2);",
         )?;
 
-        info!("user {username} has deleted {count} votes from poll {poll_id}");
+        if !exists_opt.query_row(params![&poll_id, &o], |r| r.get(0))? {
+            warn!("User {username} has provided a non-existent option id ({o}) to update the poll");
+            return Err(rusqlite::Error::InvalidParameterName(
+                "Nonexistent poll option".into(),
+            ));
+        }
     }
+
+    // Delete the entry
+    conn.execute(
+        "DELETE FROM user_vote
+        WHERE username = ?1
+          AND voting_opt_id IN (
+            SELECT vo.id
+            FROM voting_options vo
+            WHERE vo.voting_id = ?2
+          );",
+        params![&username, &poll_id],
+    )?;
 
     for o in &option_ids {
         conn.execute(
-            "INSERT INTO user_vote VALUES (?1, ?2)",
+            "INSERT INTO user_vote (username, voting_opt_id) VALUES (?1, ?2)",
             params![&username, o],
         )?;
     }
 
-    info!(
-        "user {username} has selected {} options from poll {poll_id}",
-        option_ids.len()
-    );
+    info!("user {username} has deleted updated poll {poll_id} deleting");
 
     Ok(poll_id)
 }
@@ -171,6 +182,7 @@ pub fn init_db() -> Result<(), Box<dyn Error>> {
         (),
     )?;
 
+    // TODO: Voting option identifiers should be UUIDs
     conn.execute(
         "CREATE TABLE voting_options(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
