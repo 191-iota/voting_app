@@ -33,10 +33,18 @@ async fn index() -> Result<NamedFile, std::io::Error> {
 
 #[post("/user/<username>")]
 async fn create_user(username: String) -> Result<(), status::Custom<&'static str>> {
-    // TODO: implement username existing validation
     let result = repository::create_user(username);
     match result {
-        Ok(_) => Ok(()),
+        Ok(v) => {
+            if v == true {
+                Err(status::Custom(
+                    Status::ExpectationFailed,
+                    "Username already exists",
+                ))
+            } else {
+                Ok(())
+            }
+        }
         Err(_) => Err(status::Custom(
             Status::InternalServerError,
             "Failed to create user by username.",

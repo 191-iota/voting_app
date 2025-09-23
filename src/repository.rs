@@ -11,7 +11,15 @@ use rusqlite::Connection;
 use rusqlite::Result;
 use rusqlite::params;
 
-// TODO: create a "does user exist" function
+fn exists_user(username: &str) -> Result<bool, rusqlite::Error> {
+    let conn = Connection::open("voting_db.db3")?;
+
+    let count = conn.query_one("SELECT 1 FROM user WHERE username = ?1", [username], |r| {
+        r.get::<_, i64>(0)
+    })?;
+
+    if count == 1 { Ok(true) } else { Ok(false) }
+}
 
 pub fn save_voting_poll(poll: VotingRequest) -> Result<i64, Box<dyn Error>> {
     let conn = Connection::open("voting_db.db3")?;
@@ -52,11 +60,15 @@ pub fn save_voting_poll(poll: VotingRequest) -> Result<i64, Box<dyn Error>> {
     Ok(voting_id)
 }
 
-pub fn create_user(username: String) -> Result<(), Box<dyn Error>> {
+pub fn create_user(username: String) -> Result<bool, Box<dyn Error>> {
     let conn = Connection::open("voting_db.db3")?;
 
+    if exists_user(&username)? {
+        return Ok(false);
+    }
+
     conn.execute("INSERT INTO user VALUES (?1)", [&username])?;
-    Ok(())
+    Ok(true)
 }
 
 pub fn get_poll_by_id(id: &i64) -> Result<VotingResponse, rusqlite::Error> {
