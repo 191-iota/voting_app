@@ -1,8 +1,28 @@
 use rocket::serde::Deserialize;
+use rocket::tokio::sync::broadcast;
 use serde::Serialize;
 use std::collections::HashMap;
 use validator::Validate;
 use validator::ValidationError;
+
+// TODO: Rename Voting  -> Poll
+
+pub struct PollSession {
+    pub tx: broadcast::Sender<i64>,
+    pub state: VotingState,
+    pub db_id: i64,
+}
+
+impl PollSession {
+    pub fn new(db_id: i64) -> Self {
+        let (tx, _) = broadcast::channel(16);
+        Self {
+            tx,
+            state: VotingState::Started,
+            db_id,
+        }
+    }
+}
 
 pub struct VotingSession {
     pub title: String,

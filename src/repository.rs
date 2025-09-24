@@ -1,4 +1,6 @@
 use std::error::Error;
+use std::io;
+use std::io::ErrorKind;
 
 use crate::models::VotingOptionResponse;
 use crate::models::VotingRequest;
@@ -27,6 +29,11 @@ pub fn save_voting_poll(poll: VotingRequest) -> Result<i64, Box<dyn Error>> {
     let mut stmt = conn.prepare(
         "INSERT INTO voting (state, title, voting_time_mins, username, is_multi) VALUES (?1, ?2, ?3, ?4, ?5) RETURNING id;",
     )?;
+
+    exists_user(&poll.username)
+        .map_err(|e| io::Error::new(ErrorKind::Other, format!("Username check failed {e}")))?
+        .then_some(())
+        .ok_or_else(|| io::Error::new(ErrorKind::NotFound, "Username does not exist"));
 
     let voting_id = stmt.query_row(
         (

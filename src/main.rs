@@ -14,6 +14,7 @@ use rocket::tokio::time::{Duration, sleep};
 use uuid::Uuid;
 use validator::Validate;
 
+use self::models::PollSession;
 use self::models::VotingResponse;
 use self::models::VotingState;
 use self::models::VotingUpdateRequest;
@@ -55,21 +56,20 @@ async fn create_user(username: String) -> Result<(), status::Custom<&'static str
 #[post("/", data = "<body>")]
 async fn create_poll(
     body: Json<VotingRequest>,
-    active_polls: &State<Arc<DashMap<String, (VotingState, i64)>>>,
+    active_polls: &State<Arc<DashMap<String, PollSession>>>,
 ) -> Result<String, status::Custom<&'static str>> {
-    // TODO: implement user existing validation (by username)
-    // Validate entries
     if body.validate().is_err() {
         Err(status::Custom(Status::BadRequest, "Validation failed"))
     } else {
-        let poll_id = save_voting_poll(body.into_inner()).expect("Failed storing voting poll");
+        // TODO: Avoid using box pointer here for errors
+        let result = save_voting_poll(body.into_inner()).expect("Failed saving the poll");
 
         let poll_uuid = Uuid::new_v4();
         let uuid_string = poll_uuid.clone().to_string();
         let polls = active_polls.inner().clone();
 
         tokio::spawn(async move {
-            polls.insert(uuid_string.clone(), (VotingState::Started, poll_id));
+            polls.insert(uuid_string.clone(), PollSession::new(result));
 
             // Await till switching to finished state
             sleep(Duration::from_secs(86400)).await;
@@ -150,6 +150,13 @@ async fn update_poll(
 }
 
 // TODO: implement via broadcast rx tx eventstream an endpoint which live updates the view
+#[get("/<id>/live")]
+async fn get_live_poll_update(
+    id: String,
+    active_polls: &State<Arc<DashMap<String, (VotingState, i64)>>>,
+    mut end: rocket::Shutdown,
+) {
+}
 
 #[launch]
 async fn rocket() -> _ {
@@ -174,7 +181,7 @@ async fn rocket() -> _ {
 
     rocket::custom(figment)
         // Dashmap has Uuid as key and a state and db id tuple as value
-        .manage(Arc::new(DashMap::<String, (VotingState, i64)>::new()))
+        .manage(Arc::new(DashMap::<String, PollSession>::new()))
         .mount(
             "/",
             routes![create_poll, create_user, index, get_poll, update_poll],
