@@ -2,9 +2,10 @@ use std::error::Error;
 use std::io;
 use std::io::ErrorKind;
 
-use crate::models::VotingOptionResponse;
-use crate::models::VotingRequest;
-use crate::models::VotingResponse;
+use crate::models::PollOptionResponse;
+use crate::models::PollRequest;
+use crate::models::PollResponse;
+use crate::models::VoteUpdate;
 use chrono::DateTime;
 use chrono::Utc;
 use log::info;
@@ -23,7 +24,7 @@ fn exists_user(username: &str) -> Result<bool, rusqlite::Error> {
     if count == 1 { Ok(true) } else { Ok(false) }
 }
 
-pub fn save_voting_poll(poll: VotingRequest) -> Result<i64, Box<dyn Error>> {
+pub fn save_voting_poll(poll: PollRequest) -> Result<i64, Box<dyn Error>> {
     let conn = Connection::open("voting_db.db3")?;
 
     let mut stmt = conn.prepare(
@@ -78,14 +79,30 @@ pub fn create_user(username: String) -> Result<bool, Box<dyn Error>> {
     Ok(true)
 }
 
-pub fn get_poll_by_id(id: &i64) -> Result<VotingResponse, rusqlite::Error> {
+pub fn get_option_votes(poll_id: &i64) -> Result<Vec<VoteUpdate>, rusqlite::Error> {
+    let conn = Connection::open("voting_db.db3")?;
+
+    let mut stmnt = conn.prepare("
+            SELECT vo.id, COUNT(*) AS count FROM voting_options INNER JOIN user_vote uv ON vo.id = uv.voting_opt_id WHERE vo.voting_id = ?1 GROUP BY vo.id")?;
+
+    Ok(stmnt
+        .query_map([poll_id], |r| {
+            Ok(VoteUpdate {
+                option_uuid: r.get(0)?,
+                votes: r.get(1)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?)
+}
+
+pub fn get_poll_by_id(id: &i64) -> Result<PollResponse, rusqlite::Error> {
     let conn = Connection::open("voting_db.db3")?;
     let mut get_poll = conn.prepare(
         "SELECT v.title, v.created_at, v.voting_time_mins, v.state, v.is_multi FROM voting v WHERE v.id = ?1",
     )?;
 
     let mut poll = get_poll.query_row([id], |r| {
-        Ok(VotingResponse {
+        Ok(PollResponse {
             title: r.get(0)?,
             remaining_time: calc_remaining_time(r.get(1)?, r.get(2)?),
             options: vec![],
@@ -93,16 +110,15 @@ pub fn get_poll_by_id(id: &i64) -> Result<VotingResponse, rusqlite::Error> {
             is_multi: r.get(4)?,
         })
     })?;
-    println!("{}", poll.title);
 
     let mut get_options = conn.prepare(
         "SELECT vo.id, vo.title, vo.is_selected FROM voting_options vo WHERE vo.voting_id = ?1",
     )?;
 
-    // TODO: should return Vec<VotingOption>
-    let voting_options: Vec<VotingOptionResponse> = get_options
+    // TODO: should return Vec<PollOption>
+    let voting_options: Vec<PollOptionResponse> = get_options
         .query_map([id], |r| {
-            Ok(VotingOptionResponse {
+            Ok(PollOptionResponse {
                 id: r.get(0)?,
                 title: r.get(1)?,
                 is_selected: r.get(2)?,
@@ -126,7 +142,7 @@ fn calc_remaining_time(timestamp: String, voting_time: u32) -> i64 {
 
 pub fn update_vote(
     poll_id: i64,
-    option_ids: Vec<i64>,
+    option_ids: Vec<String>,
     username: String,
 ) -> Result<i64, rusqlite::Error> {
     // voting_opt has to be part of poll
@@ -201,10 +217,10 @@ pub fn init_db() -> Result<(), Box<dyn Error>> {
         (),
     )?;
 
-    // TODO: Voting option identifiers should be UUIDs
+    // TODO: Poll option identifiers should be UUIDs
     conn.execute(
         "CREATE TABLE voting_options(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             is_selected INTEGER NOT NULL,
             voting_id INTEGER NOT NULL,
@@ -217,7 +233,7 @@ pub fn init_db() -> Result<(), Box<dyn Error>> {
         "CREATE TABLE user_vote(
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
-            voting_opt_id INTEGER NOT NULL,
+            voting_opt_id TEXT NOT NULL,
             FOREIGN KEY (voting_opt_id) REFERENCES voting_options(id),
             FOREIGN KEY (username) REFERENCES user(username)
         ) STRICT;",

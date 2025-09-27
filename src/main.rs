@@ -1,25 +1,28 @@
+use std::error::Error;
 use std::sync::Arc;
 
 use dashmap::DashMap;
 use log::warn;
-use models::VotingRequest;
+use models::PollRequest;
 use rocket::State;
 use rocket::fs::FileServer;
 use rocket::fs::NamedFile;
 use rocket::http::Status;
 use rocket::response::status;
+use rocket::response::stream::Event;
+use rocket::response::stream::EventStream;
 use rocket::serde::json::Json;
 use rocket::tokio;
 use rocket::tokio::time::{Duration, sleep};
 use uuid::Uuid;
 use validator::Validate;
 
+use self::models::PollResponse;
 use self::models::PollSession;
-use self::models::VotingResponse;
-use self::models::VotingState;
-use self::models::VotingUpdateRequest;
+use self::models::PollState;
+use self::models::PollUpdateRequest;
+use self::models::VoteUpdate;
 use self::repository::save_voting_poll;
-
 pub mod models;
 pub mod repository;
 
@@ -55,7 +58,7 @@ async fn create_user(username: String) -> Result<(), status::Custom<&'static str
 
 #[post("/", data = "<body>")]
 async fn create_poll(
-    body: Json<VotingRequest>,
+    body: Json<PollRequest>,
     active_polls: &State<Arc<DashMap<String, PollSession>>>,
 ) -> Result<String, status::Custom<&'static str>> {
     if body.validate().is_err() {
@@ -75,8 +78,7 @@ async fn create_poll(
             sleep(Duration::from_secs(86400)).await;
 
             if let Some(mut v) = polls.get_mut(&uuid_string) {
-                let (state, _) = v.value_mut();
-                *state = VotingState::Finished;
+                v.value_mut().state = PollState::Finished;
             }
 
             // Await till deletion
@@ -91,8 +93,8 @@ async fn create_poll(
 #[get("/<uuid>")]
 async fn get_poll(
     uuid: String,
-    active_polls: &State<Arc<DashMap<String, (VotingState, i64)>>>,
-) -> Result<Json<VotingResponse>, status::Custom<&'static str>> {
+    active_polls: &State<Arc<DashMap<String, (PollState, i64)>>>,
+) -> Result<Json<PollResponse>, status::Custom<&'static str>> {
     if Uuid::parse_str(uuid.as_str()).is_err() {
         return Err(status::Custom(Status::BadRequest, "Invalid UUID format"));
     }
@@ -121,9 +123,9 @@ async fn get_poll(
 }
 
 #[put("/", data = "<req>")]
-async fn update_poll(
-    req: Json<VotingUpdateRequest>,
-    active_polls: &State<Arc<DashMap<String, (VotingState, i64)>>>,
+async fn update_vote(
+    req: Json<PollUpdateRequest>,
+    active_polls: &State<Arc<DashMap<String, PollSession>>>,
 ) -> Result<String, status::Custom<&'static str>> {
     let body = req.into_inner();
     if Uuid::parse_str(&body.poll_id).is_err() {
@@ -134,18 +136,22 @@ async fn update_poll(
         .get(&body.poll_id)
         .ok_or(status::Custom(Status::NotFound, "Poll not found"))?;
 
-    let (state, db_id) = poll.value();
+    let session = poll.value();
 
-    if state != &VotingState::Started {
+    if &session.state != &PollState::Started {
         return Err(status::Custom(Status::BadRequest, "Poll not active"));
     }
 
-    match repository::update_vote(*db_id, body.voted_option_ids, body.username) {
+    match repository::update_vote(session.db_id, body.voted_option_uuids, body.username) {
         Ok(v) => Ok(v.to_string()),
         Err(e) => {
             warn!("non existent id access: db poll id, error: {e}");
             Err(status::Custom(Status::BadRequest, "Failed updating vote"))
         }
+    }
+
+    if let Ok(votes) = repository::get_option_votes(&session.db_id) {
+        let _ = poll.tx.send(votes);
     }
 }
 
@@ -153,9 +159,26 @@ async fn update_poll(
 #[get("/<id>/live")]
 async fn get_live_poll_update(
     id: String,
-    active_polls: &State<Arc<DashMap<String, (VotingState, i64)>>>,
+    active_polls: &State<Arc<DashMap<String, PollSession>>>,
     mut end: rocket::Shutdown,
-) {
+) -> Result<EventStream![], rocket::response::Debug<Box<dyn Error>>> {
+    let rx_opt = active_polls.get(&id).map(|sess| sess.tx.subscribe());
+
+    Ok(EventStream! {
+        if let Some(mut rx) = rx_opt {
+            loop {
+                let votes = tokio::select! {
+                    _ = &mut end => break,
+                    m = rx.recv() => match m {
+                        Ok(m) => m,
+                        Err(_) => break,
+                    }
+                };
+                // It is to be expected that the frontend has each option uuid
+                yield Event::json(&votes);
+            }
+        }
+    })
 }
 
 #[launch]
@@ -173,7 +196,7 @@ async fn rocket() -> _ {
     let do_init = std::env::var("DO_INIT")
         .ok()
         .and_then(|v| v.parse::<bool>().ok())
-        .unwrap_or(false);
+        .unwrap_or(true);
 
     if do_init {
         repository::init_db().expect("Failed to initialize DB");
