@@ -21,7 +21,6 @@ use self::models::PollResponse;
 use self::models::PollSession;
 use self::models::PollState;
 use self::models::PollUpdateRequest;
-use self::models::VoteUpdate;
 use self::repository::save_voting_poll;
 pub mod models;
 pub mod repository;
@@ -142,20 +141,22 @@ async fn update_vote(
         return Err(status::Custom(Status::BadRequest, "Poll not active"));
     }
 
+    let vote_id;
     match repository::update_vote(session.db_id, body.voted_option_uuids, body.username) {
-        Ok(v) => Ok(v.to_string()),
+        Ok(v) => vote_id = v,
         Err(e) => {
             warn!("non existent id access: db poll id, error: {e}");
-            Err(status::Custom(Status::BadRequest, "Failed updating vote"))
+            return Err(status::Custom(Status::BadRequest, "Failed updating vote"));
         }
     }
 
     if let Ok(votes) = repository::get_option_votes(&session.db_id) {
         let _ = poll.tx.send(votes);
     }
+
+    Ok(vote_id.to_string())
 }
 
-// TODO: implement via broadcast rx tx eventstream an endpoint which live updates the view
 #[get("/<id>/live")]
 async fn get_live_poll_update(
     id: String,
@@ -207,7 +208,14 @@ async fn rocket() -> _ {
         .manage(Arc::new(DashMap::<String, PollSession>::new()))
         .mount(
             "/",
-            routes![create_poll, create_user, index, get_poll, update_poll],
+            routes![
+                create_poll,
+                create_user,
+                index,
+                get_poll,
+                update_vote,
+                get_live_poll_update
+            ],
         )
         .mount("/static", FileServer::from("static"))
 }

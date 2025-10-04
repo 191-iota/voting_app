@@ -4,17 +4,15 @@ use serde::Serialize;
 use validator::Validate;
 use validator::ValidationError;
 
-// TODO: Rename Poll  -> Poll
-
 pub struct PollSession {
-    pub tx: broadcast::channel::<VoteUpdate>(16),
+    pub tx: broadcast::Sender<Vec<VoteUpdate>>,
     pub state: PollState,
     pub db_id: i64,
 }
 
 impl PollSession {
     pub fn new(db_id: i64) -> Self {
-        let (tx, _) = broadcast::channel::<VoteUpdate>(16);
+        let (tx, _) = broadcast::channel::<Vec<VoteUpdate>>(16);
         Self {
             tx,
             state: PollState::Started,
@@ -60,7 +58,7 @@ pub struct PollUpdateRequest {
     pub voted_option_uuids: Vec<String>,
 }
 
-#[derive(Deserialize, Validate)]
+#[derive(Deserialize, Serialize, Validate)]
 pub struct PollOptionRequest {
     #[validate(length(min = 1, max = 255))]
     pub title: String,
@@ -89,6 +87,12 @@ impl PollState {
     }
 }
 
-fn validate_min_selection(options: Vec<PollOptionRequest>) -> Result<(), ValidationError> {
-    Ok(())
+fn validate_min_selection(options: &Vec<PollOptionRequest>) -> Result<(), ValidationError> {
+    for o in options {
+        if o.is_selected {
+            return Ok(());
+        }
+    }
+
+    Err(ValidationError::new("Must select at least one option"))
 }
