@@ -29,7 +29,6 @@ pub struct PollRequest {
     pub title: String,
     #[validate(range(min = 1, max = 255))]
     pub voting_time: u32,
-    // TODO: Implement rule that one option has to be selected
     #[validate(length(min = 1), custom(function = "validate_min_selection"))]
     pub options: Vec<PollOptionRequest>,
     pub state: PollState,
@@ -51,11 +50,12 @@ pub struct PollResponse {
     pub is_multi: bool,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Validate, Deserialize)]
 pub struct PollUpdateRequest {
     pub username: String,
     pub poll_id: String,
-    pub voted_option_uuids: Vec<String>,
+    #[validate(length(min = 1))]
+    pub selected_options: Vec<String>,
 }
 
 #[derive(Deserialize, Serialize, Validate)]
@@ -67,7 +67,7 @@ pub struct PollOptionRequest {
 
 #[derive(Serialize)]
 pub struct PollOptionResponse {
-    pub id: i64,
+    pub id: String,
     pub title: String,
     pub is_selected: bool,
 }

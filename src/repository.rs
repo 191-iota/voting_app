@@ -5,6 +5,7 @@ use std::io::ErrorKind;
 use crate::models::PollOptionResponse;
 use crate::models::PollRequest;
 use crate::models::PollResponse;
+use crate::models::PollState;
 use crate::models::VoteUpdate;
 use chrono::DateTime;
 use chrono::Utc;
@@ -13,15 +14,16 @@ use log::warn;
 use rusqlite::Connection;
 use rusqlite::Result;
 use rusqlite::params;
+use uuid::Uuid;
 
 fn exists_user(username: &str) -> Result<bool, rusqlite::Error> {
     let conn = Connection::open("voting_db.db3")?;
 
-    let count = conn.query_one("SELECT 1 FROM user WHERE username = ?1", [username], |r| {
-        r.get::<_, i64>(0)
-    })?;
+    let exists = conn
+        .prepare("SELECT 1 FROM user WHERE username = ?1")?
+        .exists([username])?;
 
-    if count == 1 { Ok(true) } else { Ok(false) }
+    if exists { Ok(true) } else { Ok(false) }
 }
 
 pub fn save_voting_poll(poll: PollRequest) -> Result<i64, Box<dyn Error>> {
@@ -38,7 +40,7 @@ pub fn save_voting_poll(poll: PollRequest) -> Result<i64, Box<dyn Error>> {
 
     let voting_id = stmt.query_row(
         (
-            &poll.state.as_str(),
+            PollState::Started.as_str(),
             poll.title,
             &poll.voting_time,
             &poll.username,
@@ -48,14 +50,20 @@ pub fn save_voting_poll(poll: PollRequest) -> Result<i64, Box<dyn Error>> {
     )?;
 
     for option in poll.options {
-        // TODO: implement validation for is_multi
+        let option_uuid = Uuid::new_v4();
         let mut stmt = conn.prepare(
-            "INSERT INTO voting_options (title, is_selected, voting_id) VALUES (?1, ?2, ?3) RETURNING id;",
+            "INSERT INTO voting_options (id, title, is_selected, voting_id) VALUES (?1, ?2, ?3, ?4) RETURNING id;",
         )?;
 
-        let option_id = stmt.query_row((option.title, option.is_selected, voting_id), |r| {
-            r.get::<_, i64>(0)
-        })?;
+        let option_id = stmt.query_row(
+            (
+                option_uuid.to_string(),
+                option.title,
+                option.is_selected,
+                voting_id,
+            ),
+            |r| r.get::<_, String>(0),
+        )?;
 
         if option.is_selected {
             conn.execute(
@@ -76,6 +84,7 @@ pub fn create_user(username: String) -> Result<bool, Box<dyn Error>> {
     }
 
     conn.execute("INSERT INTO user VALUES (?1)", [&username])?;
+
     Ok(true)
 }
 
@@ -85,14 +94,14 @@ pub fn get_option_votes(poll_id: &i64) -> Result<Vec<VoteUpdate>, rusqlite::Erro
     let mut stmnt = conn.prepare("
             SELECT vo.id, COUNT(*) AS count FROM voting_options INNER JOIN user_vote uv ON vo.id = uv.voting_opt_id WHERE vo.voting_id = ?1 GROUP BY vo.id")?;
 
-    Ok(stmnt
+    stmnt
         .query_map([poll_id], |r| {
             Ok(VoteUpdate {
                 option_uuid: r.get(0)?,
                 votes: r.get(1)?,
             })
         })?
-        .collect::<Result<Vec<_>, _>>()?)
+        .collect::<Result<Vec<_>, _>>()
 }
 
 pub fn get_poll_by_id(id: &i64) -> Result<PollResponse, rusqlite::Error> {
@@ -115,7 +124,6 @@ pub fn get_poll_by_id(id: &i64) -> Result<PollResponse, rusqlite::Error> {
         "SELECT vo.id, vo.title, vo.is_selected FROM voting_options vo WHERE vo.voting_id = ?1",
     )?;
 
-    // TODO: should return Vec<PollOption>
     let voting_options: Vec<PollOptionResponse> = get_options
         .query_map([id], |r| {
             Ok(PollOptionResponse {
@@ -217,10 +225,9 @@ pub fn init_db() -> Result<(), Box<dyn Error>> {
         (),
     )?;
 
-    // TODO: Poll option identifiers should be UUIDs
     conn.execute(
         "CREATE TABLE voting_options(
-            id TEXT PRIMARY KEY AUTOINCREMENT,
+            id TEXT PRIMARY KEY,
             title TEXT NOT NULL,
             is_selected INTEGER NOT NULL,
             voting_id INTEGER NOT NULL,

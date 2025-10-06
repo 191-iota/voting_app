@@ -39,7 +39,7 @@ async fn create_user(username: String) -> Result<(), status::Custom<&'static str
     let result = repository::create_user(username);
     match result {
         Ok(v) => {
-            if v == true {
+            if !v {
                 Err(status::Custom(
                     Status::ExpectationFailed,
                     "Username already exists",
@@ -48,10 +48,13 @@ async fn create_user(username: String) -> Result<(), status::Custom<&'static str
                 Ok(())
             }
         }
-        Err(_) => Err(status::Custom(
-            Status::InternalServerError,
-            "Failed to create user by username.",
-        )),
+        Err(e) => {
+            println!("{}", e);
+            Err(status::Custom(
+                Status::InternalServerError,
+                "Failed to create user by username.",
+            ))
+        }
     }
 }
 
@@ -92,16 +95,15 @@ async fn create_poll(
 #[get("/<uuid>")]
 async fn get_poll(
     uuid: String,
-    active_polls: &State<Arc<DashMap<String, (PollState, i64)>>>,
+    active_polls: &State<Arc<DashMap<String, PollSession>>>,
 ) -> Result<Json<PollResponse>, status::Custom<&'static str>> {
     if Uuid::parse_str(uuid.as_str()).is_err() {
         return Err(status::Custom(Status::BadRequest, "Invalid UUID format"));
     }
 
     if let Some(v) = active_polls.get(&uuid) {
-        let (_, v) = v.value();
         // get it from the database
-        let result = repository::get_poll_by_id(v);
+        let result = repository::get_poll_by_id(&v.db_id);
         match result {
             Ok(v) => Ok(Json(v)),
             Err(e) => {
@@ -137,18 +139,18 @@ async fn update_vote(
 
     let session = poll.value();
 
-    if &session.state != &PollState::Started {
+    if session.state != PollState::Started {
         return Err(status::Custom(Status::BadRequest, "Poll not active"));
     }
 
-    let vote_id;
-    match repository::update_vote(session.db_id, body.voted_option_uuids, body.username) {
-        Ok(v) => vote_id = v,
+    let vote_id = match repository::update_vote(session.db_id, body.selected_options, body.username)
+    {
+        Ok(v) => v,
         Err(e) => {
             warn!("non existent id access: db poll id, error: {e}");
             return Err(status::Custom(Status::BadRequest, "Failed updating vote"));
         }
-    }
+    };
 
     if let Ok(votes) = repository::get_option_votes(&session.db_id) {
         let _ = poll.tx.send(votes);
