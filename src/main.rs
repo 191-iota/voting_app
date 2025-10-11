@@ -92,7 +92,7 @@ async fn create_poll(
     }
 }
 
-#[get("/<uuid>")]
+#[get("/poll/<uuid>")]
 async fn get_poll(
     uuid: String,
     active_polls: &State<Arc<DashMap<String, PollSession>>>,
@@ -123,7 +123,7 @@ async fn get_poll(
     }
 }
 
-#[put("/", data = "<req>")]
+#[put("/poll", data = "<req>")]
 async fn update_vote(
     req: Json<PollUpdateRequest>,
     active_polls: &State<Arc<DashMap<String, PollSession>>>,
@@ -159,7 +159,7 @@ async fn update_vote(
     Ok(vote_id.to_string())
 }
 
-#[get("/<id>/live")]
+#[get("/poll/<id>/live")]
 async fn get_live_poll_update(
     id: String,
     active_polls: &State<Arc<DashMap<String, PollSession>>>,
@@ -189,7 +189,7 @@ async fn rocket() -> _ {
     let figment = rocket::Config::figment()
         .merge(("address", "0.0.0.0"))
         .merge((
-            "port",
+            "rocket.port",
             std::env::var("PORT")
                 .ok()
                 .and_then(|p| p.parse::<u16>().ok())

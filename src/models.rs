@@ -31,7 +31,6 @@ pub struct PollRequest {
     pub voting_time: u32,
     #[validate(length(min = 1), custom(function = "validate_min_selection"))]
     pub options: Vec<PollOptionRequest>,
-    pub state: PollState,
     pub is_multi: bool,
 }
 

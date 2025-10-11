@@ -1,216 +1,215 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Tailwind + Alpine Minimal Template</title>
-
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Alpine Poll App</title>
+  <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        darkMode: "class",
-        theme: { extend: {} },
+  <script defer>
+
+
+
+function app() {
+
+  return {
+    stage: "username",
+    username: "",
+    error: "",
+    pollLink: "",
+    copiedMsg: "",
+    poll: null,
+    pollId: "",
+    votes: {},
+    es: null,
+    selectedOptions: [],
+    newPoll: {
+      username: "",
+      title: "",
+      voting_time: 60,
+      options: [{ title: "", is_selected: false }],
+      is_multi: false,
+    },
+init() {
+// prefer hash (no server request), fallback to pathname
+  const hash = (window.location.hash || "").replace(/^#/, "");
+  const parts = window.location.pathname.split("/");
+  const last = parts.pop() || parts.pop(); // handles trailing slash
+  const uuid = hash || last;
+
+  if (uuid && /^[0-9a-fA-F-]{36}$/.test(uuid)) {
+    this.pollId = uuid;
+    this.loadPoll(uuid);          // fetch poll & subscribe
+    this.stage = "live_poll";
+  }
+},
+    async submitUsername() {
+      this.error = "";
+      if (this.username.length < 3) return this.error = "Invalid username.";
+      this.newPoll.username = this.username;
+      this.stage = "create";
+    },
+
+    async createPoll() {
+      this.error = "";
+      try {
+        const res = await fetch("http://127.0.0.1:8000/", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(this.newPoll),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const uuid = await res.text();
+        this.pollId = uuid;
+        this.pollLink = `http://127.0.0.1:8000/#${uuid}`;
+        this.stage = "created";
+      } catch (e) {
+        this.error = e.message || "Poll creation failed.";
+      }
+    },
+
+    async copyLink() {
+      await navigator.clipboard.writeText(this.pollLink);
+      this.copiedMsg = "Link copied!";
+      setTimeout(() => this.copiedMsg = "", 2000);
+    },
+
+    async loadPoll(id) {
+      try {
+        const res = await fetch(`http://127.0.0.1:8000/poll/${id}`);
+        if (!res.ok) throw new Error(await res.text());
+        this.poll = await res.json();
+        this.selectedOptions = [];
+        this.stage = "live_poll";
+        this.subscribeLive(id);
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+
+    subscribeLive(id) {
+      if (this.es) this.es.close();
+      this.es = new EventSource(`http://127.0.0.1:8000/poll/${id}/live`);
+      this.es.onmessage = (e) => {
+        this.votes = JSON.parse(e.data);
       };
-    </script>
+    },
 
-    <script
-      defer
-      src="https://unpkg.com/alpinejs@3.15.0/dist/cdn.min.js"></script>
-  </head>
+    async vote() {
+      try {
+        const payload = {
+          username: this.username,
+          poll_id: this.pollId,
+          selected_options: this.selectedOptions,
+        };
+        const res = await fetch("http://127.0.0.1:8000/poll", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error(await res.text());
+      } catch (e) {
+        this.error = e.message;
+      }
+    },
+  };
+}
+window.app = app;
+document.addEventListener("alpine:init", () => {
+  Alpine.data("app", window.app);
+});
 
-  <body
-    class="antialiased bg-gray-100 dark:bg-gray-900 text-gray-900 dark:text-gray-100"
-    x-data="app()">
-    <header class="bg-white dark:bg-gray-800 shadow-sm">
-      <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div class="flex justify-between items-center h-16">
-          <div class="flex items-center space-x-3">
-            <a href="#" class="text-lg font-semibold">Brand</a>
-            <nav class="hidden md:flex gap-4 text-sm">
-              <a href="#" class="hover:underline">Home</a>
-              <a href="#" class="hover:underline">Docs</a>
-              <a href="#" class="hover:underline">Contact</a>
-            </nav>
-          </div>
+  </script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen flex items-center justify-center p-6"
+      x-data="app()" x-init="init()">
+  <div class="bg-gray-800 p-6 rounded w-full max-w-md space-y-4">
 
-          <div class="flex items-center gap-3">
-            <button
-              @click="toggleDark"
-              class="p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700">
-              <span x-text="dark ? '☀️' : '🌙'"></span>
-            </button>
-
-            <button
-              @click="mobileOpen = !mobileOpen"
-              class="md:hidden p-2 rounded-md hover:bg-gray-100 dark:hover:bg-gray-700">
-              ☰
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div
-        x-show="mobileOpen"
-        x-cloak
-        class="md:hidden border-t border-gray-200 dark:border-gray-700">
-        <div class="px-4 py-3 flex flex-col gap-2">
-          <a href="#">Home</a>
-          <a href="#">Docs</a>
-          <a href="#">Contact</a>
-        </div>
-      </div>
-    </header>
-
-    <main class="max-w-6xl mx-auto p-4 sm:p-6 lg:p-8">
-      <section class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 mb-6">
-        <div
-          class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h1 class="text-2xl font-bold">Tailwind + Alpine Template</h1>
-            <p class="mt-1 text-sm text-gray-600 dark:text-gray-300">
-              Minimal, production-minded starting point.
-            </p>
-          </div>
-          <div class="flex gap-2">
-            <button
-              @click="openModal = true"
-              class="px-4 py-2 bg-indigo-600 text-white rounded shadow-sm hover:opacity-95">
-              Open modal
-            </button>
-            <a href="#" class="px-4 py-2 border rounded">Secondary</a>
-          </div>
-        </div>
-      </section>
-
-      <!-- Grid -->
-      <section class="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-          <h3 class="font-semibold">Card</h3>
-          <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
-            Quick card with action.
-          </p>
-          <div class="mt-4 flex gap-2">
-            <button class="px-3 py-1 bg-green-600 text-white rounded text-sm">
-              Action
-            </button>
-            <button class="px-3 py-1 border rounded text-sm">More</button>
-          </div>
-        </div>
-
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-          <h3 class="font-semibold">Form</h3>
-          <form @submit.prevent="submitForm" class="mt-3 space-y-3">
-            <input
-              x-model="form.name"
-              placeholder="Name"
-              class="w-full px-3 py-2 bg-gray-50 dark:bg-gray-900 border rounded" />
-            <input
-              x-model="form.email"
-              placeholder="Email"
-              class="w-full px-3 py-2 bg-gray-50 dark:bg-gray-900 border rounded" />
-            <div class="flex gap-2">
-              <button
-                type="submit"
-                class="px-3 py-1 bg-indigo-600 text-white rounded">
-                Save
-              </button>
-              <button
-                type="button"
-                @click="form = { name: '', email: '' }"
-                class="px-3 py-1 border rounded">
-                Reset
-              </button>
-            </div>
-          </form>
-        </div>
-
-        <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-          <h3 class="font-semibold">List</h3>
-          <ul class="mt-3 space-y-2 text-sm text-gray-600 dark:text-gray-300">
-            <template x-for="(item, i) in items" :key="i">
-              <li class="flex justify-between items-center">
-                <span x-text="item"></span>
-                <button
-                  @click="items.splice(i,1)"
-                  class="px-2 py-0.5 border rounded text-xs">
-                  remove
-                </button>
-              </li>
-            </template>
-          </ul>
-          <div class="mt-3 flex gap-2">
-            <input
-              x-model="newItem"
-              placeholder="Add item"
-              class="flex-1 px-2 py-1 bg-gray-50 dark:bg-gray-900 border rounded" />
-            <button
-              @click="addItem"
-              class="px-3 py-1 bg-blue-600 text-white rounded">
-              Add
-            </button>
-          </div>
-        </div>
-      </section>
-    </main>
-
-    <!-- Modal -->
-    <div
-      x-show="openModal"
-      x-cloak
-      class="fixed inset-0 flex items-center justify-center z-50">
-      <div
-        @click="openModal = false"
-        class="absolute inset-0 bg-black/40"></div>
-      <div
-        @click.stop
-        class="bg-white dark:bg-gray-800 rounded-lg shadow-lg max-w-md w-full p-6">
-        <h2 class="text-lg font-semibold">Modal</h2>
-        <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
-          Simple modal example.
-        </p>
-        <div class="mt-4 flex justify-end gap-2">
-          <button @click="openModal = false" class="px-3 py-1 border rounded">
-            Close
-          </button>
-          <button
-            @click="openModal = false"
-            class="px-3 py-1 bg-indigo-600 text-white rounded">
-            OK
-          </button>
-        </div>
-      </div>
+    <!-- Username -->
+    <div x-show="stage === 'username'">
+      <form @submit.prevent="submitUsername" class="space-y-3">
+        <h1 class="text-lg font-semibold">Enter Username</h1>
+        <input x-model="username"
+               placeholder="Username"
+               class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded">
+        <button type="submit"
+                class="w-full py-2 bg-indigo-600 rounded hover:opacity-90">Continue</button>
+        <p x-text="error" class="text-red-400 text-sm"></p>
+      </form>
     </div>
 
-    <!-- Footer -->
-    <footer class="max-w-6xl mx-auto p-4 text-center text-xs text-gray-500">
-      ©
-      <span x-text="new Date().getFullYear()"></span>
-    </footer>
+    <!-- Poll Creation -->
+    <div x-show="stage === 'create'">
+      <form @submit.prevent="createPoll" class="space-y-3">
+        <h1 class="text-lg font-semibold">Create Poll</h1>
+        <input x-model="newPoll.title" placeholder="Poll Title"
+               class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded">
+        <input x-model.number="newPoll.voting_time" type="number" min="1"
+               placeholder="Voting Time (sec)"
+               class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded">
+        <label class="flex items-center gap-2">
+          <input type="checkbox" x-model="newPoll.is_multi" class="accent-indigo-500">
+          Allow multiple selections
+        </label>
 
-    <script>
-      function app() {
-        return {
-          mobileOpen: false,
-          openModal: false,
-          dark: document.documentElement.classList.contains("dark"),
-          newItem: "",
-          items: ["Example 1", "Example 2"],
-          form: { name: "", email: "" },
-          toggleDark() {
-            this.dark = !this.dark;
-            document.documentElement.classList.toggle("dark", this.dark);
-          },
-          addItem() {
-            if (!this.newItem.trim()) return;
-            this.items.push(this.newItem.trim());
-            this.newItem = "";
-          },
-          submitForm() {
-            console.log("form", this.form);
-            this.form = { name: "", email: "" };
-          },
-        };
-      }
-    </script>
-  </body>
+<template x-for="(opt, i) in newPoll.options" :key="i">
+  <div class="flex items-center gap-2">
+    <input x-model="opt.title"
+           placeholder="Option Title"
+           class="flex-1 px-3 py-2 bg-gray-700 border border-gray-600 rounded">
+    <input :type="newPoll.is_multi ? 'checkbox' : 'radio'"
+           name="creatorSelection"
+           x-model="opt.is_selected"
+           :value="true"
+           class="accent-indigo-500">
+  </div>
+</template>
+
+        <button type="button" @click="newPoll.options.push({ title: '' })"
+                class="text-sm text-indigo-400 hover:underline">+ Add Option</button>
+        <button type="submit"
+                class="w-full py-2 bg-green-600 rounded hover:opacity-90">Create Poll</button>
+        <p x-text="error" class="text-red-400 text-sm"></p>
+      </form>
+    </div>
+
+    <!-- Poll Created -->
+    <div x-show="stage === 'created'">
+      <h1 class="text-lg font-semibold mb-2">Poll Created!</h1>
+      <p>Here’s your shareable link:</p>
+      <div class="bg-gray-700 px-3 py-2 rounded mt-2 break-all">
+        <span x-text="pollLink"></span>
+      </div>
+      <p class="text-sm text-gray-400 mt-2">Anyone with this link can vote.</p>
+      <button @click="copyLink" class="mt-3 py-2 w-full bg-indigo-600 rounded hover:opacity-90">
+        Copy Link
+      </button>
+      <p x-text="copiedMsg" class="text-green-400 text-sm"></p>
+    </div>
+<div x-show="stage === 'live_poll'">
+  <template x-if="poll">
+    <div>
+      <h1 class="text-lg font-semibold mb-2" x-text="poll.title"></h1>
+      <template x-for="opt in poll.options" :key="opt.id">
+        <label class="flex items-center gap-2 mb-2">
+          <input 
+            :type="poll.is_multi ? 'checkbox' : 'radio'"
+            name="vote"
+            :value="opt.id"
+            x-model="selectedOptions"
+            class="accent-indigo-500"
+          >
+          <span x-text="opt.title"></span>
+          <span class="ml-auto text-sm text-gray-400" x-text="votes[opt.id] || 0"></span>
+        </label>
+      </template>
+      <button @click="vote" class="mt-3 py-2 w-full bg-green-600 rounded hover:opacity-90">
+        Submit Vote
+      </button>
+      <p x-text="error" class="text-red-400 text-sm mt-2"></p>
+    </div>
+  </template>
+</div>
+  </div>
+</body>
 </html>
